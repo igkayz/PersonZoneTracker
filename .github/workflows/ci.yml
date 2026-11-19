@@ -1,0 +1,89 @@
+name: Check & Build YOLO Zone Tracker
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install lightweight test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy opencv-python-headless
+
+      - name: Check Python syntax
+        run: |
+          python -m py_compile app_server.py yolo_person_line_detector.py
+
+      - name: Run tracker, HTML DOM & SQLite smoke tests
+        run: |
+          python - << 'PY'
+          import re, json, sqlite3, numpy as np
+          import yolo_person_line_detector as det
+          import app_server
+
+          # 1. Verify polygon tracker enter & exit
+          tracker = det.StablePersonTracker()
+          poly = np.array([[100, 100], [400, 100], [400, 400], [100, 400]], np.int32)
+          tracks, evs1 = tracker.update([(200, 50, 260, 250, 92.0)], poly)
+          assert len(tracks) == 1 and tracks[0]["crossed"] is True, f"Expected inside zone: {tracks}"
+          evs_out = []
+          for _ in range(6):
+              tracks, evs = tracker.update([(10, 10, 60, 80, 92.0)], poly)
+              evs_out.extend(evs)
+          assert len(tracks) == 1 and tracks[0]["crossed"] is False, f"Expected outside zone: {tracks}"
+          assert any("ВЫХОД" in e["event_status"] for e in evs_out), f"Expected exit event: {evs_out}"
+
+          # 2. Verify empty polygon does not crash
+          tracks, _ = tracker.update([(200, 50, 260, 250, 92.0)], np.empty((0, 2), np.int32))
+          assert len(tracks) == 1 and tracks[0]["crossed"] is False
+
+          # 3. Verify all getElementById references exist in HTML
+          html = open("person_line_interface.html", encoding="utf-8").read()
+          dom_ids = set(re.findall(r'id=["\']([^"\']+)["\']', html))
+          js_ids = set(re.findall(r'getElementById\(["\']([^"\']+)["\']\)', html))
+          missing = js_ids - dom_ids
+          assert not missing, f"Missing DOM IDs in HTML: {missing}"
+
+          # 4. Verify SQLite database schema & 10 videos
+          conn = sqlite3.connect("nvidia_person_datasets_80_20.db")
+          cur = conn.cursor()
+          cur.execute("SELECT id, default_polygon, factory_polygon FROM video_datasets")
+          rows = cur.fetchall()
+          assert len(rows) == 10, f"Expected 10 videos, got {len(rows)}"
+          for vid, dp, fp in rows:
+              assert len(json.loads(dp)) >= 3, f"Invalid default_polygon on video {vid}"
+              assert len(json.loads(fp)) >= 3, f"Invalid factory_polygon on video {vid}"
+          conn.close()
+          print("ALL CI CHECKS PASSED!")
+          PY
+
+      - name: Build release ZIP package
+        run: |
+          mkdir -p dist
+          zip -r dist/YOLO_Person_Zone_Tracker_Build.zip \
+            app_server.py \
+            yolo_person_line_detector.py \
+            person_line_interface.html \
+            nvidia_person_datasets_80_20.db \
+            start.bat \
+            requirements.txt \
+            README.md
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YOLO-Person-Zone-Tracker-Build
+          path: dist/YOLO_Person_Zone_Tracker_Build.zip
