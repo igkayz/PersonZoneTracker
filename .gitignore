@@ -1,0 +1,21 @@
+# Виртуальные окружения и кэш Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Тяжелые видео, результаты и веса моделей
+datasets/raw_videos/
+results_videos/
+runs/
+*.pt
+*.mp4
+*.webm
+*.part
+
+# Системные файлы и IDE
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
