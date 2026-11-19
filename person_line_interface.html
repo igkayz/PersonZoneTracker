@@ -1,0 +1,1549 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Видеоаналитика v4: Сохранение линий в SQLite + 10 уникальных полноростовых CCTV-видео</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<style>
+  :root {
+    --bg: #151018;
+    --panel: #150d23;
+    --panel-alt: #221936;
+    --border: #0d0e1f;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --green: #10b981;
+    --amber: #f59e0b;
+    --red: #ef4444;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+ 
+  
+  html, body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.2;
+    padding: 8px;
+    width: 100%;
+    max-width: 100vw;
+    
+  }
+  header {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 50px 10px 16px;
+    position: relative;
+    margin-bottom: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+  .brand h1 {
+    font-size: 1.24rem;
+    font-weight: 700;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .brand p {
+    font-size: 0.88rem;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+  .badge {
+    font-size: 0.73rem;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-weight: 600;
+    border: 1px solid rgba(56, 189, 248, 0.4);
+    background: rgba(56, 189, 248, 0.15);
+    color: var(--accent);
+  }
+  .badge-ok {
+    border-color: rgba(16, 185, 129, 0.45);
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+  }
+  .badge-warn {
+    border-color: rgba(245, 158, 11, 0.45);
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+  }
+  .status-strip {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+  }
+  .status-item {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+  }
+  .status-item .lbl {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    color: var(--muted);
+    letter-spacing: 0.03em;
+  }
+  .status-item .val {
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: #fff;
+    margin-top: 2px;
+    word-break: break-word;
+  }
+  .main-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.8fr)  minmax(0, 1fr);
+    gap: 8px;
+  }
+  @media (max-width: 1100px) {
+    .main-grid { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .card-title {
+    font-size: 0.94rem;
+    font-weight: 700;
+    color: #fff;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .controls-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+  select, button {
+    background: var(--panel-alt);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 11px;
+    font-size: 0.81rem;
+    cursor: pointer;
+  }
+  select { flex: 1; min-width: 260px; }
+  button:hover { border-color: var(--accent); }
+  .btn-primary {
+    background: rgba(56, 189, 248, 0.2);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+  .btn-green {
+    background: rgba(16, 185, 129, 0.2);
+    border-color: var(--green);
+    color: #d1fae5;
+    font-weight: 600;
+  }
+  .btn-warn {
+    background: rgba(245, 158, 11, 0.2);
+    border-color: var(--amber);
+    color: #fef3c7;
+    font-weight: 600;
+  }
+  .btn-danger {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: var(--red);
+    color: #fee2e2;
+    font-weight: 600;
+  }
+  .hint-bar {
+    background: rgba(56, 189, 248, 0.1);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    color: #bae6fd;
+    font-size: 0.8rem;
+    padding: 8px 12px;
+    border-radius: 6px;
+  }
+  .video-stage {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: #030712;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    cursor: crosshair;
+  }
+  .prob-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(225px, 1fr));
+    gap: 8px;
+  }
+  .prob-card {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 10px;
+  }
+  .prob-card.crossed {
+    border-color: var(--red);
+    background: rgba(239, 68, 68, 0.16);
+  }
+  .prob-top {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.79rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .prob-bar-bg {
+    height: 7px;
+    background: #090d16;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .prob-bar-fill {
+    height: 100%;
+    background: var(--green);
+    transition: width 0.1s linear;
+  }
+  .prob-card.crossed .prob-bar-fill { background: var(--red); }
+  .table-wrap {
+    max-height: 265px;
+    overflow-y: auto;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.77rem;
+    table-layout: fixed;
+    word-wrap: break-word;
+  }
+  th, td {
+    padding: 7px 9px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    background: var(--panel-alt);
+    color: var(--muted);
+    position: sticky;
+    top: 0;
+  }
+  tr.clickable-row { cursor: pointer; }
+  tr.clickable-row:hover { background: rgba(56, 189, 248, 0.1); }
+  tr.active-row { background: rgba(16, 185, 129, 0.15); }
+  .tag-train { color: #34d399; font-weight: 700; }
+  .tag-val { color: #fbbf24; font-weight: 700; }
+  .tag-saved {
+    background: rgba(16, 185, 129, 0.2);
+    color: #34d399;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.71rem;
+    font-weight: 600;
+  }
+  .tag-enter {
+    background: rgba(239, 68, 68, 0.22);
+    color: #fca5a5;
+    padding: 2px 2px;
+    border-radius: 4px;
+    font-weight: 700;
+    display: inline-block;
+    text-align: center;
+  }
+  .tag-exit {
+    background: rgba(16, 185, 129, 0.22);
+    color: #6ee7b7;
+    padding: 2px 2px;
+    border-radius: 4px;
+    font-weight: 700;
+    display: inline-block;
+    text-align: center;
+  }
+  .sql-box {
+    background: #050811;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: Consolas, monospace;
+    font-size: 0.74rem;
+    color: #93c5fd;
+    white-space: pre-wrap;
+    overflow-x: auto;
+  }
+/* я перенесла эти блядские кнопки сюда*/
+.burger-menu {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.burger-menu summary {
+  padding: 12px 16px;
+  cursor: pointer;
+  color: var(--accent);
+  user-select: none;
+  outline: none;
+  transition: background 0.2s;
+}
+
+.burger-content {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/*блок с инфой по БД и прочему*/
+.info-dropdown {
+  position: absolute;
+  display: inline-block;
+  margin-left: 5px;
+  z-index: 1000;
+  margin-left: 0;
+  right: 16px;
+  top: 16px;
+}
+.info-icon {
+  cursor: pointer;
+  font-size: 1.1rem;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  transition: all 0.2s;
+}
+.info-content {
+  display: none;
+  position: absolute;
+  background: var(--panel);
+  opacity: 0.95;
+  right: 0;
+  top: 130%;
+  padding: 8px;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  min-width: 320px;
+  box-shadow: 0 4px 4px rgba(0, 0, 0, 0.3);
+}
+.info-dropdown:hover .info-content {
+  display: flex;
+}
+.info-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.info-lbl {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.03em;
+}
+.info-val {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.live-counter {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  padding: 5px 12px;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.live-counter-label {
+  text-transform: uppercase;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 400;
+}
+.live-counter-values {
+  font-size: 0.75rem;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>
+      Видеоаналитика v4: Автосохранение линий в SQLite + 10 уникальных полноростовых CCTV-видео
+      <span id="lineSavedBadge" class="badge badge-ok">Область сохраняется для каждого видео</span>
+      <span id="dbConnectionBadge" class="badge badge-warn">Проверка БД SQLite...</span>
+    </h1>
+    <p>Нарисованная вами линия автоматически сохраняется в БД SQLite и в памяти браузера индивидуально для каждого видео.</p>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <button id="btnModeBrowser" class="btn-primary">Режим 1: Видеоплеер + Нейросеть в браузере (MobileNetV2)</button>
+    <button id="btnModeServer">Режим 2: Поток с сервера Python (PyTorch YOLO)</button>
+  </div>
+  <div class="info-dropdown">
+    <div class="info-icon">?</div>
+    <div class="info-content">
+      <div class="info-row">
+        <span class="info-lbl">Статус базы данных SQLite</span>
+        <span class="info-val" id="stSqliteStatus">Подключение...</span>
+      </div>
+      <div class="info-row">
+        <span class="info-lbl">Статус нейросети и весов</span>
+        <span class="info-val" id="stModelStatus">Загрузка модели...</span>
+      </div>
+      <div class="info-row">
+        <span class="info-lbl">Текущее видео и статус полигона</span>
+        <span class="info-val" id="stCurrentVideo">#1...</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+
+
+<div class="main-grid">
+  <div class="card">
+    <div class="card-title">
+      <span>Выбор любого из 10 уникальных полноростовых видео из SQL (<code>video_datasets</code>)</span>
+      <div style="display: flex; gap: 12px; align-items: center; flex-shrink: 0;">
+        <span id="videoProgressText" style="font-size:0.78rem;color:var(--muted); text-align: right; font-variant-numeric: tabular-nums;">Кадр: 0.0 сек</span>
+        <div class="live-counter">
+          <div class="live-counter-label">Людей в кадре</div>
+          <div class="live-counter-values">
+            <span>Всего: <span id="stPeopleNow" style="color: #34d399;">0</span></span>
+            <span style="color: var(--border);">|</span>
+            <span>В зоне: <span id="stInZoneNow" style="color: #f87171;">0</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls-row">
+      <select id="sqlVideoSelect" title="Все 10 видео — абсолютно разные полноростовые камеры наблюдения"></select>
+      <button id="btnPlayPause" class="btn-green">Пауза / Старт</button>
+      <label class="btn-primary" style="padding:7px 11px;border-radius:6px;cursor:pointer;font-size:0.81rem;">
+        Открыть свой .mp4
+        <input type="file" id="customVideoFile" accept="video/mp4,video/webm,video/*" style="display:none;">
+      </label>
+    </div>
+
+    <details class="burger-menu">
+      <summary>Дополнительные опции</summary>
+      <div class="burger-content">
+        <div class="controls-row">
+          <button id="btnDrawLine" class="btn-warn">Нарисовать зону</button>
+          <button id="btnResetLine" title="Возвращает заводскую линию только для текущего видео">Сбросить к заводской зоне</button>
+          <button id="btnServerDownloadAll" title="Скачать все 10 уникальных оригиналов видео в папку datasets/raw_videos/">Скачать все 10 видео на диск</button>
+          <button id="btnServerTrain" title="Запускает дообучение YOLO 80/20 (8 Train / 2 Val)">Дообучить YOLO 80/20</button>
+          <button id="btnRecordWebm" class="btn-danger">Записать ролик (.webm)</button>
+        </div>
+      </div>
+    </details>
+
+  
+
+    <div class="hint-bar" id="statusHintBar">Нажмите «Нарисовать зону» в дополнительных опциях, чтобы задать многоугольную зону кликами мыши (двойной клик завершает).</div>
+
+    <div class="video-stage">
+      <video id="realVideoPlayer" crossorigin="anonymous" playsinline muted loop style="display:none;"></video>
+      <img id="serverStreamImg" crossorigin="anonymous" style="display:none;" alt="Server YOLO Frame">
+      <canvas id="mainCanvas" width="960" height="540"></canvas>
+    </div>
+
+    <div class="card-title" style="margin-top:4px;">
+      <span>Устойчивый трекинг людей в кадре (без потери ID) и статус зоны</span>
+      <span style="font-size:0.77rem;color:var(--muted);">Re-ID память: 8.0 сек | Coasting: 18 кадров</span>
+    </div>
+    <div class="prob-grid" id="livePeopleCards">
+      <div style="font-size:0.8rem;color:var(--muted);">Загрузка видео и нейросети...</div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:14px; min-width: 0;">
+    <div class="card">
+      <div class="card-title">
+        <span>Каталог 10 уникальных видео в SQLite (кликните по строке для выбора)</span>
+        <span class="badge badge-ok">80% Train (8) / 20% Val (2)</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 7%;">#</th>
+              <th style="width: 16%;">Выборка</th>
+              <th style="width: 25%;">Видеофайл</th>
+              <th style="width: 16%;">Линия / Кэш</th>
+              <th style="width: 36%;">Описание камеры</th>
+            </tr>
+          </thead>
+          <tbody id="sqlTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>Журнал входов и выходов из зоны</span>
+        <div style="display:flex;gap:6px;">
+          <button id="btnExportCsv" class="btn-primary">Скачать CSV</button>
+          <button id="btnClearEvents">Очистить</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 12%;">Время</th>
+              <th style="width: 20%;">Видео</th>
+              <th style="width: 15%;">Человек</th>
+              <th style="width: 15%;">Точность</th>
+              <th style="width: 14%;">Стопа</th>
+              <th style="width: 24%;">Событие зоны</th>
+            </tr>
+          </thead>
+          <tbody id="eventsTableBody"></tbody>
+        </table>
+      </div>
+
+      <div style="font-size:0.74rem;color:var(--muted);">Последний SQL-запрос в <code>nvidia_person_datasets_80_20.db</code>:</div>
+      <div class="sql-box" id="lastSqlBox">-- Ожидание сохранения линии или пересечения границы зоны человеком...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let SQL_VIDEOS = [
+  {
+    id: 1,
+    video_name: "worker-zone-detection.mp4",
+    source_provider: "Intel IoT / Industrial Zone CCTV",
+    split_group: "train",
+    direct_url: "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/worker-zone-detection.mp4",
+    default_polygon: "[[0.18, 0.62], [0.84, 0.62], [0.84, 0.95], [0.18, 0.95]]",
+    factory_polygon: "[[0.18, 0.62], [0.84, 0.62], [0.84, 0.95], [0.18, 0.95]]",
+    zone_side: 1, has_custom_line: 0,
+    scene_description: "Камера №1 (Цех/Зона): рабочий в полный рост заходит в контролируемую зону и выходит обратно",
+    is_downloaded: 0
+  },
+  {
+    id: 2,
+    video_name: "people-detection.mp4",
+    source_provider: "Intel IoT / Overhead Passage CCTV",
+    split_group: "train",
+    direct_url: "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/people-detection.mp4",
+    default_polygon: "[[0.15, 0.58], [0.85, 0.58], [0.85, 0.95], [0.15, 0.95]]",
+    factory_polygon: "[[0.15, 0.58], [0.85, 0.58], [0.85, 0.95], [0.15, 0.95]]",
+    zone_side: 1, has_custom_line: 0,
+    scene_description: "Камера №2 (Верхний ракурс): несколько человек в полный рост проходят через контрольный створ",
+    is_downloaded: 0
+  },
+  {
+    id: 3,
+    video_name: "one-by-one-person-detection.mp4",
+    source_provider: "Intel IoT / Checkpoint CCTV",
+    split_group: "train",
+    direct_url: "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/one-by-one-person-detection.mp4",
+    default_polygon: "[[0.18, 0.64], [0.82, 0.64], [0.82, 0.95], [0.18, 0.95]]",
+    factory_polygon: "[[0.18, 0.64], [0.82, 0.64], [0.82, 0.95], [0.18, 0.95]]",
+    zone_side: 1, has_custom_line: 0,
+    scene_description: "Камера №3 (Проходная): люди по одному в полный рост пересекают границу коридора",
+    is_downloaded: 0
+  },
+  {
+    id: 4,
+    video_name: "store-aisle-detection.mp4",
+    source_provider: "Intel IoT / Corridor Aisle CCTV",
+    split_group: "train",
+    direct_url: "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/store-aisle-detection.mp4",
+    default_polygon: "[[0.20, 0.62], [0.80, 0.62], [0.80, 0.95], [0.20, 0.95]]",
+    factory_polygon: "[[0.20, 0.62], [0.80, 0.62], [0.80, 0.95], [0.20, 0.95]]",
+    zone_side: 1, has_custom_line: 0,
+    scene_description: "Камера №4 (Длинный проход): люди в полный рост идут вдоль стеллажей и пересекают черту",
+    is_downloaded: 0
+  },
+  {
+    id: 5,
+    video_name: "pedestrians_summer_street.mp4",
+    source_provider: "YOLO26 Vision Studio / Street CCTV",
+    split_group: "train",
+    direct_url: "https://raw.githubusercontent.com/aparsoft/yolo-streamlit-detection-tracking/master/videos/pedestrians_summer_street.mp4",
+    default_polygon: "[[0.14, 0.60], [0.86, 0.60], [0.86, 0.95], [0.14, 0.95]]",
+    factory_polygon: "[[0.14, 0.60], [0.86, 0.60], [0.86, 0.95], [0.14, 0.95]]",
+    zone_side: 1, has_custom_line: 0,
+    scene_description: "Камера №5 (Уличный переход): плотный встречный поток пешеходов в полный рост",
+    is_downloaded: 0
+  },
+  {
+    id: 6,
+    video_name: "people-walking.mp4",
+    source_provider: "Roboflow Supervision / High-Angle Zone",
+    split_group: "train",
+    direct_url: "https://media.roboflow.com/supervision/video-examples/people-walking.mp4",
+    default_polygon: "[[0.12, 0.55], [0.88, 0.55], [0.88, 0.95], [0.12, 0.95]]",
+    factory_polygon: "[[0.12, 0.55], [0.88, 0.55], [0.88, 0.95], [0.12, 0.95]]",
+    zone_side: 1, has_custom_line: 0,
+    scene_description: "Камера №6 (Высотный обзор сверху): поток людей в полный рост идет через широкую площадку",
+    is_downloaded: 0
+  },
+  {
+    id: 7,
+    video_name: "market-square.mp4",
+    source_provider: "Roboflow Supervision / Perimeter Square",
+    split_group: "train",
+    direct_url: "https://media.roboflow.com/supervision/video-examples/market-square.mp4",
+    default_polygon: "[[0.15, 0.60], [0.85, 0.60], [0.85, 0.95], [0.15, 0.95]]",
+    factory_polygon: "[[0.15, 0.60], [0.85, 0.60], [0.85, 0.95], [0.15, 0.95]]",
+    zone_side: 1, has_custom_line: 0,
+    scene_description: "Камера №7 (Периметр площади): люди в полный рост входят и выходят из контролируемого сектора",
+    is_downloaded: 0
+  },
+  {
+    id: 8,
+    video_name: "grocery-store.mp4",
+    source_provider: "Roboflow Supervision / Indoor Hall Zone",
+    split_group: "train",
+    direct_url: "https://media.roboflow.com/supervision/video-examples/grocery-store.mp4",
+    default_polygon: "[[0.16, 0.64], [0.84, 0.64], [0.84, 0.95], [0.16, 0.95]]",
+    factory_polygon: "[[0.16, 0.64], [0.84, 0.64], [0.84, 0.95], [0.16, 0.95]]",
+    zone_side: 1, has_custom_line: 0,
+    scene_description: "Камера №8 (Внутренний зал): перемещение людей в полный рост через границу рабочей зоны",
+    is_downloaded: 0
+  },
+  {
+    id: 9,
+    video_name: "person-bicycle-car-detection.mp4",
+    source_provider: "Intel IoT / Outdoor Gate CCTV (Val)",
+    split_group: "val",
+    direct_url: "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/person-bicycle-car-detection.mp4",
+    default_polygon: "[[0.15, 0.64], [0.85, 0.64], [0.85, 0.95], [0.15, 0.95]]",
+    factory_polygon: "[[0.15, 0.64], [0.85, 0.64], [0.85, 0.95], [0.15, 0.95]]",
+    zone_side: 1, has_custom_line: 0,
+    scene_description: "Камера №9 (Проверка 20% Val — Въездные ворота): проход человека в полный рост мимо транспорта",
+    is_downloaded: 0
+  },
+  {
+    id: 10,
+    video_name: "subway.mp4",
+    source_provider: "Roboflow Supervision / Transit Corridor (Val)",
+    split_group: "val",
+    direct_url: "https://media.roboflow.com/supervision/video-examples/subway.mp4",
+    default_polygon: "[[0.16, 0.62], [0.84, 0.62], [0.84, 0.95], [0.16, 0.95]]",
+    factory_polygon: "[[0.16, 0.62], [0.84, 0.62], [0.84, 0.95], [0.16, 0.95]]",
+    zone_side: 1, has_custom_line: 0,
+    scene_description: "Камера №10 (Проверка 20% Val — Вестибюль и турникеты): пересечение людьми рубежа контроля",
+    is_downloaded: 0
+  }
+];
+
+let API_BASE = (window.location.protocol.startsWith("http") && window.location.host)
+  ? window.location.origin
+  : "http://127.0.0.1:8000";
+
+let backendConnected = false;
+let useServerStreamMode = false;
+let serverDownloadProgress = {};
+let waitingForLocalProxyId = null;
+
+const STORAGE_KEY_POLYGONS = "yolo_saved_polygons_v4";
+
+function getSavedPolygonsMap() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_POLYGONS);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function applySavedPolygonsToCatalog() {
+  const map = getSavedPolygonsMap();
+  SQL_VIDEOS.forEach(v => {
+    const saved = map[String(v.id)];
+    if (saved) {
+      v.default_polygon = JSON.stringify(saved.points);
+      v.has_custom_line = 1;
+    }
+  });
+}
+applySavedPolygonsToCatalog();
+
+
+const videoEl = document.getElementById("realVideoPlayer");
+const serverImg = document.getElementById("serverStreamImg");
+const canvas = document.getElementById("mainCanvas");
+const ctx = canvas.getContext("2d");
+
+let activeVideo = SQL_VIDEOS[0];
+let currentPolygon = JSON.parse(activeVideo.default_polygon || "[]").map(p => ({ x: p[0] * canvas.width, y: p[1] * canvas.height}));
+let isDrawingPolygon = false;
+let mousePos = null;
+
+let browserNeuralNet = null;
+let isDetectingFrame = false;
+let currentVisibleTracks = [];
+let crossingEventsList = [];
+
+videoEl.addEventListener("error", () => {
+  if (!activeVideo) return;
+  if (backendConnected) {
+    waitingForLocalProxyId = activeVideo.id;
+    document.getElementById("statusHintBar").textContent =
+      `Сервер Python (app_server.py) докачивает оригинал видео «${activeVideo.video_name}» в папку datasets/raw_videos/... Поток включится автоматически по завершении загрузки.`;
+  } else {
+    document.getElementById("statusHintBar").textContent =
+      `Для воспроизведения видео «${activeVideo.video_name}» с сервера Roboflow без блокировки CORS запустите в папке проекта: python app_server.py`;
+  }
+});
+
+class PersistentPersonTracker {
+  constructor() {
+    this.nextId = 1;
+    this.tracks = new Map();
+    this.reidTtlMs = 8000;
+    this.maxCoastFrames = 18;
+    this.maxMatchDist = 270;
+    this.emaAlpha = 0.42;
+  }
+
+  reset() {
+    this.tracks.clear();
+    this.nextId = 1;
+  }
+
+  static iou(b1, b2) {
+    const xA = Math.max(b1.x, b2.x);
+    const yA = Math.max(b1.y, b2.y);
+    const xB = Math.min(b1.x + b1.w, b2.x + b2.w);
+    const yB = Math.min(b1.y + b1.h, b2.y + b2.h);
+    const inter = Math.max(0, xB - xA) * Math.max(0, yB - yA);
+    if (inter <= 0) return 0;
+    const area1 = Math.max(1, b1.w * b1.h);
+    const area2 = Math.max(1, b2.w * b2.h);
+    return inter / (area1 + area2 - inter);
+  }
+
+  static isPointInPolygon(point, polygon) {
+    if (!polygon || polygon.length < 3) return false;
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i <polygon.length; j = i++) {
+      const xi = polygon[i].x, yi = polygon[i].y;
+      const xj = polygon[j].x, yj = polygon[j].y;
+      const intersect = ((yi > point.y) !== (yj > point.y)) && (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+  
+
+  update(rawDetections) {
+    const now = performance.now();
+    const matchedIds = new Set();
+    const sorted = [...rawDetections].sort((a, b) => b.conf - a.conf);
+
+    for (const det of sorted) {
+      const dcx = det.x + det.w * 0.5;
+      const dcy = det.y + det.h * 0.5;
+
+      let bestId = null;
+      let bestScore = -99999;
+
+      for (const [tid, tr] of this.tracks.entries()) {
+        if (matchedIds.has(tid)) continue;
+        if ((now - tr.lastSeen) > this.reidTtlMs) continue;
+
+        const predBox = { x: tr.x + tr.vx, y: tr.y + tr.vy, w: tr.w, h: tr.h };
+        const pcx = predBox.x + predBox.w * 0.5;
+        const pcy = predBox.y + predBox.h * 0.5;
+
+        const dist = Math.hypot(dcx - pcx, dcy - pcy);
+        const iouVal = PersistentPersonTracker.iou(det, predBox);
+        const sizeSim = Math.min(det.h, tr.h) / Math.max(det.h, tr.h, 1);
+
+        if (dist > this.maxMatchDist && iouVal < 0.06) continue;
+
+        const score = (iouVal * 240) - dist + (sizeSim * 50);
+        if (score > bestScore) {
+          bestScore = score;
+          bestId = tid;
+        }
+      }
+
+      if (bestId === null) {
+        if (det.conf < 40.0) continue;
+        const newId = this.nextId++;
+        const footX = det.x + det.w * 0.5;
+        const footY = det.y + det.h;
+        const initInZone = PersistentPersonTracker.isPointInPolygon({ x: footX, y: footY}, currentPolygon);
+
+        this.tracks.set(newId, {
+          id: newId,
+          x: det.x, y: det.y, w: det.w, h: det.h,
+          vx: 0, vy: 0,
+          conf: det.conf,
+          lastSeen: now,
+          missedFrames: 0,
+          hits: 1,
+          inZone: initInZone,
+          prevInZone: initInZone,
+          history: [{ x: footX, y: footY }]
+        });
+        matchedIds.add(newId);
+      } else {
+        const tr = this.tracks.get(bestId);
+        const oldCx = tr.x + tr.w * 0.5;
+        const oldCy = tr.y + tr.h * 0.5;
+        const a = this.emaAlpha;
+
+        tr.x = (1 - a) * tr.x + a * det.x;
+        tr.y = (1 - a) * tr.y + a * det.y;
+        tr.w = (1 - a) * tr.w + a * det.w;
+        tr.h = (1 - a) * tr.h + a * det.h;
+
+        const newCx = tr.x + tr.w * 0.5;
+        const newCy = tr.y + tr.h * 0.5;
+        tr.vx = 0.65 * tr.vx + 0.35 * (newCx - oldCx);
+        tr.vy = 0.65 * tr.vy + 0.35 * (newCy - oldCy);
+        tr.conf = 0.65 * tr.conf + 0.35 * det.conf;
+        tr.lastSeen = now;
+        tr.missedFrames = 0;
+        tr.hits += 1;
+        matchedIds.add(bestId);
+      }
+    }
+
+    const visible = [];
+    for (const [tid, tr] of this.tracks.entries()) {
+      if (!matchedIds.has(tid)) {
+        tr.missedFrames += 1;
+        if ((now - tr.lastSeen) > this.reidTtlMs) {
+          this.tracks.delete(tid);
+          continue;
+        }
+        if (tr.missedFrames <= this.maxCoastFrames && tr.hits >= 2) {
+          tr.x += tr.vx * 0.65;
+          tr.y += tr.vy * 0.65;
+          tr.vx *= 0.85;
+          tr.vy *= 0.85;
+        } else {
+          continue;
+        }
+      }
+
+      const footX = tr.x + tr.w * 0.5;
+      const footY = tr.y + tr.h;
+      tr.history.push({ x: footX, y: footY });
+      if (tr.history.length > 30) tr.history.shift();
+      const currInZone = PersistentPersonTracker.isPointInPolygon({ x: footX, y: footY }, currentPolygon);
+
+      if (!tr.prevInZone && currInZone) {
+        tr.inZone = true;
+        recordZoneEvent(tr.id, tr.conf, footX, footY, "ВХОД В ЗОНУ (ПЕРЕСЕК)");
+      } else if (tr.prevInZone && !currInZone) {
+        tr.inZone = false;
+        recordZoneEvent(tr.id, tr.conf, footX, footY, "ВЫХОД ИЗ ЗОНЫ (СНЯТ)");
+      } else {
+        tr.inZone = currInZone;
+      }
+
+      tr.prevInZone = currInZone;
+
+      visible.push({
+        id: tr.id,
+        x: tr.x, y: tr.y, w: tr.w, h: tr.h,
+        footX: footX, footY: footY,
+        conf: tr.conf,
+        crossed: tr.inZone,
+        history: tr.history
+      });
+    }
+
+    currentVisibleTracks = visible;
+    renderLivePeopleCards();
+  }
+}
+
+const personTracker = new PersistentPersonTracker();
+
+async function initBrowserNeuralNetwork() {
+  const stModel = document.getElementById("stModelStatus");
+  if (typeof cocoSsd === "undefined") {
+    stModel.textContent = "Запустите python app_server.py для локального PyTorch YOLO";
+    return;
+  }
+  try {
+    stModel.textContent = "Загрузка нейросети детекции людей (MobileNetV2 WebGL)...";
+    browserNeuralNet = await cocoSsd.load({ base: "mobilenet_v2" });
+    if (!backendConnected) {
+      stModel.textContent = "Активна: MobileNetV2 WebGL + Re-ID трекер (8 сек)";
+    }
+  } catch (err) {
+    try {
+      browserNeuralNet = await cocoSsd.load({ base: "lite_mobilenet_v2" });
+      stModel.textContent = "Активна: COCO-SSD + Re-ID трекер (8 сек)";
+    } catch (e2) {
+      stModel.textContent = "Для офлайн-работы запустите: python app_server.py";
+    }
+  }
+}
+
+function renderSqlCatalog() {
+  const selectEl = document.getElementById("sqlVideoSelect");
+  const prevVal = activeVideo ? activeVideo.id : 1;
+  selectEl.innerHTML = SQL_VIDEOS.map(v => {
+    const splitTag = v.split_group === "train" ? "TRAIN 80%" : "VAL 20%";
+    const lineTag = v.has_custom_line ? " [✓ Своя линия сохранена]" : "";
+    const cacheTag = v.is_downloaded ? " [На диске]" : "";
+    return `<option value="${v.id}" ${v.id === prevVal ? "selected" : ""}>#${v.id} [${splitTag}] ${v.video_name}${lineTag}${cacheTag} — ${v.scene_description}</option>`;
+  }).join("");
+
+  const tbody = document.getElementById("sqlTableBody");
+  tbody.innerHTML = SQL_VIDEOS.map(v => {
+    const isAct = activeVideo && v.id === activeVideo.id;
+    const splitBadge = v.split_group === "train"
+      ? `<span class="tag-train">TRAIN 80%</span>`
+      : `<span class="tag-val">VAL 20%</span>`;
+    const prog = serverDownloadProgress[String(v.id)] || serverDownloadProgress[v.id];
+    const lineBadge = v.has_custom_line
+      ? `<span class="tag-saved">✓ Своя линия</span> `
+      : `<span style="color:var(--muted);font-size:0.71rem;">Заводская</span> `;
+
+    let cacheText = v.is_downloaded
+      ? `<span style="color:#34d399;font-weight:600;">В кэше</span>`
+      : (v.direct_url.includes("raw.githubusercontent.com") ? "GitHub Raw" : "Через сервер");
+    if (prog && prog.state === "downloading") {
+      cacheText = `<span style="color:#fbbf24;font-weight:600;">${prog.pct}% (${prog.mb_done} МБ)</span>`;
+    }
+    return `
+      <tr class="clickable-row ${isAct ? 'active-row' : ''}" onclick="selectVideoById(${v.id})">
+        <td>#${v.id}</td>
+        <td>${splitBadge}</td>
+        <td><b>${v.video_name}</b></td>
+        <td>${lineBadge}${cacheText}</td>
+        <td style="color:var(--muted); text-align: justify; text-justify: inter-word; hyphens: auto;">${v.scene_description}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function selectVideoById(videoId) {
+  const found = SQL_VIDEOS.find(v => v.id === parseInt(videoId, 10));
+  if (!found) return;
+  activeVideo = found;
+
+  const polyNorm = JSON.parse(found.default_polygon || "[]");
+  currentPolygon = polyNorm.map(p => ({ x: p[0] * canvas.width, y: p[1] * canvas.height}));
+  isDrawingPolygon = false;
+  currentVisibleTracks = [];
+
+  const lineStateText = found.has_custom_line ? "✓ Загружена ваша сохраненная линия" : "Заводская линия";
+  document.getElementById("stCurrentVideo").textContent =
+    `#${found.id} ${found.video_name} (${lineStateText})`;
+  renderSqlCatalog();
+
+  if (backendConnected) {
+    fetch(`${API_BASE}/api/select_video`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ video_id: found.id })
+    }).catch(() => {});
+  }
+
+  const isRawGithub = found.direct_url.includes("raw.githubusercontent.com");
+
+  if (backendConnected && found.is_downloaded) {
+    waitingForLocalProxyId = null;
+    videoEl.src = `${API_BASE}/api/raw_video?id=${found.id}&t=${Date.now()}`;
+    videoEl.load();
+    videoEl.play().catch(() => {});
+    return;
+  }
+
+  if (isRawGithub) {
+    waitingForLocalProxyId = null;
+    videoEl.src = found.direct_url;
+    videoEl.load();
+    videoEl.play().catch(() => {});
+    return;
+  }
+
+  if (backendConnected) {
+    waitingForLocalProxyId = found.id;
+    videoEl.removeAttribute("src");
+    videoEl.load();
+    document.getElementById("statusHintBar").textContent =
+      `Сервер Python скачивает оригинал «${found.video_name}» в папку datasets/raw_videos/ (никаких дубликатов!). Поток запустится автоматически по завершении загрузки...`;
+    return;
+  }
+
+  waitingForLocalProxyId = null;
+  videoEl.src = found.direct_url;
+  videoEl.load();
+  videoEl.play().catch(() => {});
+}
+
+window.selectVideoById = selectVideoById;
+
+function recordZoneEvent(personId, confPct, footX, footY, statusText) {
+  const timeStr = new Date().toTimeString().slice(0, 5);
+  const vname = activeVideo ? activeVideo.video_name : "custom_video.mp4";
+  const fx = Math.round(footX);
+  const fy = Math.round(footY);
+  const lineStr = JSON.stringify(currentPolygon.map(p => [Math.round(p.x), Math.round(p.y)]));
+
+  crossingEventsList.unshift({
+    event_timestamp: timeStr,
+    video_name: vname,
+    person_track_id: personId,
+    confidence_pct: confPct.toFixed(1),
+    foot_x: fx,
+    foot_y: fy,
+    event_status: statusText
+  });
+
+  renderEventsTable();
+
+  const sqlQuery = `INSERT INTO line_crossing_events (event_timestamp, video_name, person_track_id, class_name, confidence_pct, foot_x, foot_y, line_coords, event_status, saved_clip_path)
+VALUES ('${new Date().toISOString().slice(0,10)} ${timeStr}', '${vname}', ${personId}, 'person', ${confPct.toFixed(1)}, ${fx}, ${fy}, '${lineStr}', '${statusText}', 'results_videos/clip_${vname}');`;
+  document.getElementById("lastSqlBox").textContent = sqlQuery;
+
+  if (backendConnected) {
+    fetch(`${API_BASE}/api/log_event`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        video_name: vname,
+        person_track_id: personId,
+        confidence_pct: parseFloat(confPct.toFixed(1)),
+        foot_x: fx,
+        foot_y: fy,
+        line_coords: lineStr,
+        event_status: statusText
+      })
+    }).catch(() => {});
+  }
+}
+
+function renderLivePeopleCards() {
+  const container = document.getElementById("livePeopleCards");
+  const inZoneCount = currentVisibleTracks.filter(p => p.crossed).length;
+  document.getElementById("stPeopleNow").textContent = currentVisibleTracks.length;
+  document.getElementById("stInZoneNow").textContent = inZoneCount;
+
+  if (currentVisibleTracks.length === 0) {
+    container.innerHTML = `<div style="font-size:0.8rem;color:var(--muted);">В текущем кадре людей не обнаружено...</div>`;
+    return;
+  }
+
+  container.innerHTML = currentVisibleTracks.map(p => `
+    <div class="prob-card ${p.crossed ? 'crossed' : ''}">
+      <div class="prob-top">
+        <span>person ID #${p.id}</span>
+        <span>${p.conf.toFixed(1)}% ${p.crossed ? '[В ЗОНЕ: ПЕРЕСЕК]' : '[ВНЕ ЗОНЫ]'}</span>
+      </div>
+      <div class="prob-bar-bg">
+        <div class="prob-bar-fill" style="width:${Math.min(100, p.conf)}%"></div>
+      </div>
+    </div>
+  `).join("");
+}
+
+function renderEventsTable() {
+  const tbody = document.getElementById("eventsTableBody");
+  if (crossingEventsList.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" style="color:var(--muted);text-align:center;">Пока нет событий входа или выхода из зоны</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = crossingEventsList.slice(0, 25).map(ev => {
+    const isEnter = String(ev.event_status).includes("ВХОД") || String(ev.event_status).includes("ПЕРЕСЕК");
+    const badgeClass = isEnter ? "tag-enter" : "tag-exit";
+    return `
+      <tr>
+        <td>${ev.event_timestamp}</td>
+        <td>${ev.video_name}</td>
+        <td><b>person #${ev.person_track_id}</b></td>
+        <td><b>${ev.confidence_pct}%</b></td>
+        <td>(${ev.foot_x}, ${ev.foot_y})</td>
+        <td><span class="${badgeClass}">${ev.event_status}</span></td>
+      </tr>
+    `;
+  }).join("");
+}
+
+async function renderLoop() {
+  if (useServerStreamMode && backendConnected) {
+    if (serverImg.complete && serverImg.naturalWidth > 0) {
+      ctx.drawImage(serverImg, 0, 0, canvas.width, canvas.height);
+    }
+  } else {
+    if (videoEl.readyState >= 2) {
+      ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+      document.getElementById("videoProgressText").textContent =
+        `Время видео: ${videoEl.currentTime.toFixed(1)} / ${(videoEl.duration || 0).toFixed(1)} сек`;
+
+      if (browserNeuralNet && !isDetectingFrame && !videoEl.paused) {
+        isDetectingFrame = true;
+        const scaleX = canvas.width / (videoEl.videoWidth || canvas.width);
+        const scaleY = canvas.height / (videoEl.videoHeight || canvas.height);
+
+        browserNeuralNet.detect(videoEl, 20, 0.22).then(predictions => {
+          const peopleOnly = predictions
+            .filter(pr => pr.class === "person" && pr.score >= 0.22)
+            .map(pr => ({
+              x: pr.bbox[0] * scaleX,
+              y: pr.bbox[1] * scaleY,
+              w: pr.bbox[2] * scaleX,
+              h: pr.bbox[3] * scaleY,
+              conf: pr.score * 100.0
+            }));
+          personTracker.update(peopleOnly);
+          isDetectingFrame = false;
+        }).catch(() => {
+          isDetectingFrame = false;
+        });
+      }
+    } else {
+      ctx.fillStyle = "#090d16";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const prog = activeVideo ? (serverDownloadProgress[String(activeVideo.id)] || serverDownloadProgress[activeVideo.id]) : null;
+      if (prog && prog.state === "downloading") {
+        ctx.fillStyle = "#f1f5f9";
+        ctx.font = "bold 16px Segoe UI, sans-serif";
+        ctx.fillText(`Скачивание оригинала «${activeVideo.video_name}»: ${prog.pct}% (${prog.mb_done} / ${prog.mb_total} МБ)`, 155, 245);
+        ctx.fillStyle = "#1e293b";
+        ctx.fillRect(200, 265, 560, 18);
+        ctx.fillStyle = "#38bdf8";
+        ctx.fillRect(200, 265, Math.round(5.6 * (prog.pct || 5)), 18);
+      } else {
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "15px Segoe UI, sans-serif";
+        ctx.fillText("Подключение видеопотока... (буферизация первых кадров)", 265, 260);
+      }
+    }
+
+    if (currentPolygon.length > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(currentPolygon[0].x, currentPolygon[0].y);
+      for (let i = 1; i < currentPolygon.length; i++) {
+        ctx.lineTo(currentPolygon[i].x, currentPolygon[i].y);
+      }
+
+      if (!isDrawingPolygon) {
+        ctx.closePath();
+        ctx.fillStyle = "rgba(239, 68, 68, 0.18)";
+        ctx.fill();
+      }
+
+      ctx.strokeStyle = "#f59e0b";
+      ctx.lineWidth = 3.5;
+      ctx.stroke();
+
+      currentPolygon.forEach((pt, idx) => {
+        ctx.fillStyle = "#38bdf8";
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 12px Segoe UI";
+        ctx.fillText(`V${idx + 1}`, pt.x + 8, pt.y - 8);
+      });
+
+      if (isDrawingPolygon && mousePos) {
+        ctx.beginPath();
+        ctx.moveTo(currentPolygon[currentPolygon.length - 1].x, currentPolygon[currentPolygon.length - 1].y);
+        ctx.lineTo(mousePos.x, mousePos.y);
+        ctx.strokeStyle = "#38bdf8";
+        ctx.setLineDash([6, 4]);
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.setLineDash([]); 
+      }
+      ctx.restore();
+    }
+
+    currentVisibleTracks.forEach(p => {
+      const color = p.crossed ? "#ef4444" : "#10b981";
+
+      if (p.history && p.history.length > 1) {
+        ctx.beginPath();
+        ctx.strokeStyle = p.crossed ? "rgba(239,68,68,0.85)" : "rgba(16,185,129,0.85)";
+        ctx.lineWidth = 2.2;
+        p.history.forEach((pt, i) => {
+          if (i === 0) ctx.moveTo(pt.x, pt.y);
+          else ctx.lineTo(pt.x, pt.y);
+        });
+        ctx.stroke();
+      }
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.6;
+      ctx.strokeRect(p.x, p.y, p.w, p.h);
+
+      const zoneTag = p.crossed ? "[В ЗОНЕ: ПЕРЕСЕК]" : "[ВНЕ ЗОНЫ]";
+      const label = `person #${p.id} | ${p.conf.toFixed(1)}% ${zoneTag}`;
+      ctx.font = "bold 12px Segoe UI, sans-serif";
+      const tw = ctx.measureText(label).width + 12;
+      ctx.fillStyle = color;
+      ctx.fillRect(p.x, Math.max(0, p.y - 22), tw, 22);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(label, p.x + 6, Math.max(15, p.y - 6));
+
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(p.footX, p.footY, 6, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  requestAnimationFrame(renderLoop);
+}
+
+async function discoverBackendPort() {
+  if (window.location.protocol.startsWith("http") && window.location.host) {
+    API_BASE = window.location.origin;
+    return;
+  }
+  for (const p of [8000, 8001, 8002, 8003]) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${p}/api/state`, { cache: "no-store" });
+      if (r.ok) {
+        API_BASE = `http://127.0.0.1:${p}`;
+        return;
+      }
+    } catch (e) {}
+  }
+}
+
+async function pollPythonBackend() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/state`, { cache: "no-store" });
+    if (!resp.ok) throw new Error("not ok");
+    const data = await resp.json();
+    backendConnected = true;
+
+    const badge = document.getElementById("dbConnectionBadge");
+    badge.className = "badge badge-ok";
+    badge.textContent = `БД SQLite ПОДКЛЮЧЕНА (${API_BASE} | ${data.db_size_kb} КБ)`;
+
+    document.getElementById("stSqliteStatus").textContent =
+      `ПОДКЛЮЧЕНА: ${data.db_path}`;
+
+    if (data.download_progress) {
+      serverDownloadProgress = data.download_progress;
+    }
+
+    if (useServerStreamMode || data.is_busy) {
+      document.getElementById("stModelStatus").textContent =
+        `${data.active_weights} | ${data.fps} FPS`;
+      document.getElementById("statusHintBar").textContent = data.worker_status;
+    }
+
+    if (useServerStreamMode) {
+      serverImg.src = `${API_BASE}/api/frame.jpg?t=${Date.now()}`;
+      currentVisibleTracks = (data.live_people || []).map(p => ({
+        id: p.id, conf: p.conf, crossed: p.crossed, footX: p.foot_x, footY: p.foot_y
+      }));
+      renderLivePeopleCards();
+    }
+
+    if (data.videos && data.videos.length > 0) {
+      const localMap = getSavedPolygonsMap();
+      data.videos.forEach(srvVid => {
+        const loc = localMap[String(srvVid.id)];
+        if (loc) {
+          srvVid.default_polygon = JSON.stringify(loc.points);
+          srvVid.has_custom_line = 1;
+        }
+      });
+      SQL_VIDEOS = data.videos;
+      if (activeVideo) {
+        const updatedActive = SQL_VIDEOS.find(v => v.id === activeVideo.id);
+        if (updatedActive && !isDrawingPolygon) {
+          activeVideo = updatedActive;
+          if (updatedActive.default_polygon) {
+            const polyNorm = JSON.parse(updatedActive.default_polygon);
+            currentPolygon = polyNorm.map(p => ({ x: p[0] * canvas.width, y: p[1] * canvas.height}));
+          }
+        }
+      }
+      renderSqlCatalog();
+
+      if (waitingForLocalProxyId !== null) {
+        const readyVid = SQL_VIDEOS.find(v => v.id === waitingForLocalProxyId && v.is_downloaded === 1);
+        if (readyVid) {
+          waitingForLocalProxyId = null;
+          videoEl.src = `${API_BASE}/api/raw_video?id=${readyVid.id}&t=${Date.now()}`;
+          videoEl.load();
+          videoEl.play().catch(() => {});
+          document.getElementById("statusHintBar").textContent =
+            `Оригинал видео «${readyVid.video_name}» скачан в локальный кэш и запущен!`;
+        }
+      }
+    }
+  } catch (e) {
+    backendConnected = false;
+    await discoverBackendPort();
+  }
+}
+
+document.getElementById("sqlVideoSelect").addEventListener("change", (e) => {
+  selectVideoById(parseInt(e.target.value, 10));
+});
+
+document.getElementById("btnPlayPause").addEventListener("click", () => {
+  if (videoEl.paused) videoEl.play();
+  else videoEl.pause();
+});
+
+document.getElementById("customVideoFile").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  useServerStreamMode = false;
+  waitingForLocalProxyId = null;
+  videoEl.src = URL.createObjectURL(file);
+  videoEl.load();
+  videoEl.play();
+  activeVideo = { id: 999, video_name: file.name, split_group: "custom", default_polygon: "[]", factory_polygon: "[]", has_custom_line: 0 };
+  currentPolygon = [];
+  document.getElementById("stCurrentVideo").textContent = `${file.name} (Локальный файл)`;
+  personTracker.reset();
+});
+
+function getCanvasPoint(e) {
+  const r = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) * (canvas.width / r.width),
+    y: (e.clientY - r.top) * (canvas.height / r.height)
+  };
+}
+
+document.getElementById("btnDrawLine").addEventListener("click", () => {
+  isDrawingPolygon = true;
+  currentPolygon = []; 
+  document.getElementById("statusHintBar").textContent =
+    "РЕЖИМ РИСОВАНИЯ: Кликайте по видео, чтобы добавить вершины. Двойной клик или клик по первой точке завершит рисование.";
+});
+
+document.getElementById("btnResetLine").addEventListener("click", () => {
+  if (!activeVideo) return;
+  const map = getSavedPolygonsMap();
+  delete map[String(activeVideo.id)];
+  localStorage.setItem(STORAGE_KEY_POLYGONS, JSON.stringify(map));
+
+  const factoryPoly = JSON.parse(activeVideo.factory_polygon || "[]");
+  activeVideo.default_polygon = JSON.stringify(factoryPoly);
+  activeVideo.has_custom_line = 0;
+
+  currentPolygon = factoryPoly.map(p => ({ x: p[0] * canvas.width, y: p[1] * canvas.height }));
+  isDrawingPolygon = false;
+
+  if (backendConnected) {
+    fetch(`${API_BASE}/api/reset_line`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ video_id: activeVideo.id })
+    }).catch(() => {});
+  }
+  renderSqlCatalog();
+  document.getElementById("statusHintBar").textContent = `Зона для видео #${activeVideo.id} сброшена к заводской.`;
+});
+
+
+
+canvas.addEventListener("mousemove", (e) => {
+  if (isDrawingPolygon) mousePos = getCanvasPoint(e);
+});
+
+canvas.addEventListener("click", (e) => {
+  if (!isDrawingPolygon) return;
+  const pt = getCanvasPoint(e);
+  
+  if (currentPolygon.length >= 3) {
+    const firstPt = currentPolygon[0];
+    const dist = Math.hypot(pt.x - firstPt.x, pt.y - firstPt.y);
+    if (dist < 15) {
+      finishDrawingPolygon();
+      return;
+    }
+  }
+  currentPolygon.push(pt);
+  document.getElementById("statusHintBar").textContent = `Точка V${currentPolygon.length} добавлена, кликните по первой точке или сделайте двойной клик для завершения.`;
+
+});
+
+canvas.addEventListener("dblclick", (e) => {
+  if (isDrawingPolygon && currentPolygon.length >= 3) {
+    finishDrawingPolygon();
+  }
+});
+
+function finishDrawingPolygon() {
+  isDrawingPolygon = false;
+  mousePos = null;
+  const normPoints = currentPolygon.map(p => [
+    +(p.x / canvas.width).toFixed(4),
+    +(p.y / canvas.height).toFixed(4)
+  ]);
+
+  const map = getSavedPolygonsMap();
+  map[String(activeVideo.id)] = { points: normPoints, update_at: Date.now() };
+  localStorage.setItem(STORAGE_KEY_POLYGONS, JSON.stringify(map));
+
+  activeVideo.default_polygon = JSON.stringify(normPoints);
+  activeVideo.has_custom_line = 1;
+
+  if (backendConnected) {
+    fetch(`${API_BASE}/api/set_line`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ video_id: parseInt(activeVideo.id, 10), polygon_norm: normPoints })
+    }).catch(() => {});
+  }
+
+  document.getElementById("lastSqlBox").textContent = `UPDATE video_datasets SET default_polygon = '${JSON.stringify(normPoints)}', has_custom_line = 1 WHERE id = ${activeVideo.id};`;
+  renderSqlCatalog();
+  
+  document.getElementById("statusHintBar").textContent = "Зона сохранена.";
+  document.getElementById("lineSavedBadge").textContent = `Зона сохранена (${currentPolygon.length} вершин)`;
+}
+ 
+
+document.getElementById("btnModeBrowser").addEventListener("click", () => {
+  useServerStreamMode = false;
+  videoEl.play().catch(() => {});
+});
+
+document.getElementById("btnModeServer").addEventListener("click", () => {
+  if (!backendConnected) {
+    alert("Сервер Python еще не запущен! Выполните в терминале:\npython app_server.py");
+    return;
+  }
+  useServerStreamMode = true;
+});
+
+document.getElementById("btnServerDownloadAll").addEventListener("click", () => {
+  if (!backendConnected) {
+    alert("Запустите python app_server.py, чтобы скачать все 10 уникальных видео в папку datasets/raw_videos/");
+    return;
+  }
+  fetch(`${API_BASE}/api/download_all`, { method: "POST" });
+  document.getElementById("statusHintBar").textContent =
+    "Запущено скачивание всех 10 уникальных видео в папку datasets/raw_videos/...";
+});
+
+document.getElementById("btnServerTrain").addEventListener("click", () => {
+  if (!backendConnected) {
+    alert("Чтобы запустить дообучение YOLO 80/20, выполните в терминале:\npython app_server.py --train");
+    return;
+  }
+  fetch(`${API_BASE}/api/train_80_20`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ epochs: 25 })
+  });
+  document.getElementById("statusHintBar").textContent =
+    "Запущено фоновое дообучение YOLO 80/20 (8 Train / 2 Val, workers=0).";
+});
+
+let recorder = null;
+let chunks = [];
+document.getElementById("btnRecordWebm").addEventListener("click", (e) => {
+  const btn = e.target;
+  if (!recorder || recorder.state === "inactive") {
+    chunks = [];
+    const stream = canvas.captureStream(30);
+    recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
+    recorder.ondataavailable = ev => { if (ev.data && ev.data.size > 0) chunks.push(ev.data); };
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: "video/webm" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `zone_control_${activeVideo ? activeVideo.video_name.replace('.mp4','') : 'clip'}.webm`;
+      a.click();
+    };
+    recorder.start();
+    btn.textContent = "Остановить и сохранить (.webm)";
+  } else {
+    recorder.stop();
+    btn.textContent = "Записать ролик (.webm)";
+  }
+});
+
+document.getElementById("btnExportCsv").addEventListener("click", () => {
+  const header = "timestamp,video_name,person_track_id,confidence_pct,foot_x,foot_y,status\n";
+  const rows = crossingEventsList.map(ev =>
+    `${ev.event_timestamp},${ev.video_name},${ev.person_track_id},${ev.confidence_pct},${ev.foot_x},${ev.foot_y},${ev.event_status}`
+  ).join("\n");
+  const blob = new Blob([header + rows], { type: "text/csv;charset=utf-8;" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "zone_events_log.csv";
+  a.click();
+});
+
+document.getElementById("btnClearEvents").addEventListener("click", () => {
+  crossingEventsList = [];
+  renderEventsTable();
+  if (backendConnected) {
+    fetch(`${API_BASE}/api/clear_events`, { method: "POST" }).catch(() => {});
+  }
+});
+
+renderSqlCatalog();
+renderEventsTable();
+discoverBackendPort().then(() => {
+  pollPythonBackend();
+  selectVideoById(1);
+});
+initBrowserNeuralNetwork();
+setInterval(pollPythonBackend, 1000);
+requestAnimationFrame(renderLoop);
+</script>
+</body>
+</html>
