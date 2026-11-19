@@ -1,0 +1,34 @@
+name: Unzip Archive
+on:
+  push:
+    paths:
+      - '**/*.zip' # Срабатывает при пуше любого zip-файла
+
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find and Unzip
+        run: |
+          # Находим первый zip-файл в репозитории
+          ZIP_FILE=$(find . -name "*.zip" | head -n 1)
+          if [ -n "$ZIP_FILE" ]; then
+            echo "Распаковка: $ZIP_FILE"
+            # Распаковываем в текущую директорию, перезаписывая файлы
+            unzip -o "$ZIP_FILE" -d .
+            # Удаляем исходный архив (опционально)
+            rm "$ZIP_FILE"
+          fi
+
+      - name: Commit and Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Auto-unzip archive" || exit 0
+          git push
